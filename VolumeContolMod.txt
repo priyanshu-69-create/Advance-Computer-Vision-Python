@@ -1,0 +1,93 @@
+import cv2
+import time
+import numpy as np
+import math
+import HandtrackModule as htm
+from comtypes import CLSCTX_ALL
+from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+
+
+###################
+wCam, hCam = 640, 480
+###################
+
+cap = cv2.VideoCapture(0)
+cap.set(3, wCam)
+cap.set(4, hCam)
+pTime = 0
+
+# Create an instance of the HandDetector class
+detector = htm.HandDetector(detectionCon=0.8)
+
+devices = AudioUtilities.GetSpeakers()
+interface = devices.Activate(
+    IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+volume = interface.QueryInterface(IAudioEndpointVolume)
+volRange = volume.GetVolumeRange()
+minVol = volRange[0]  # Typically -70
+maxVol = volRange[1]  # Typically 0
+vol = 0
+volBar = 400  # Initial volume bar height (set to maximum initially)
+volPer = 0
+
+# Updated ranges for the hand distance to make volume control more sensitive
+minLength = 30  # Start distance for hand
+maxLength = 100  # New maximum distance for hand (you can adjust this to your preference)
+
+while True:
+    success, img = cap.read()
+
+    # Use the findHands method of the detector instance
+    img = detector.findHands(img)
+    lmList = detector.findPosition(img, draw=False)
+    if len(lmList) != 0:
+        x1, y1 = lmList[4][1], lmList[4][2]
+        x2, y2 = lmList[8][1], lmList[8][2]
+        cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+
+        # Draw the hand landmarks and the connection line
+        cv2.circle(img, (x1, y1), 15, (255, 0, 255), cv2.FILLED)
+        cv2.circle(img, (x2, y2), 15, (255, 0, 255), cv2.FILLED)
+        cv2.line(img, (x1, y1), (x2, y2), (0, 255, 0), 3)
+        cv2.circle(img, (cx, cy), 15, (255, 3, 255), cv2.FILLED)
+
+        # Calculate the distance between the thumb and index finger
+        length = math.hypot(x2 - x1, y2 - y1)
+
+        # Map the hand distance to volume level and volume bar height with a smaller range
+        vol = np.interp(length, [minLength, maxLength], [minVol, maxVol])  # Volume based on hand distance
+        volBar = np.interp(length, [minLength, maxLength], [400, 150])  # Volume bar height
+        volPer = np.interp(length, [minLength, maxLength], [0, 100])  # Volume percentage (0-100)
+
+        # Print the volume value for debugging
+        print(f"Volume: {vol} - Volume Bar: {volBar} - Volume Percentage: {volPer}%")
+
+        # Set the system volume
+        volume.SetMasterVolumeLevel(vol, None)
+
+        # If the hand is very close (less than 40 pixels), show a different circle
+        if length < 40:
+            cv2.circle(img, (cx, cy), 15, (0, 255, 0), cv2.FILLED)
+
+        # Draw the volume bar (rectangle) on the screen
+        cv2.rectangle(img, (50, 150), (85, 400), (0, 255, 0), 3)  # Outer rectangle for the volume bar
+        cv2.rectangle(img, (50, int(volBar)), (85, 400), (0, 255, 0), cv2.FILLED)  # Inner filled rectangle
+
+        # Display the volume percentage on the screen
+        cv2.putText(img, f'{int(volPer)}%', (40, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 3)
+
+        # Display FPS on the frame
+        cTime = time.time()
+        fps = 1 / (cTime - pTime)
+        pTime = cTime
+        cv2.putText(img, f'FPS:{fps:.2f}', (40, 450), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 250, 0), 3)
+
+    # Show the image
+    cv2.imshow('img', img)
+
+    # Break the loop on 'q' press
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
